@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ClipboardList,
-  Factory,
   Settings,
   Store,
   CheckCircle,
@@ -20,20 +19,25 @@ import "./styles.css";
 
 const DEADLINE_HOUR = 20;
 
-const BRANCH_CODES = {
-  "LA GUACIMA": "La Guácima",
-  "GUACIMA ABAJO": "Guácima Abajo",
-  "CIRUELAS": "Ciruelas",
-  "EL COYOL": "El Coyol",
-  "TURRUCARES": "Turrúcares",
-};
+const BRANCHES = [
+  { name: "La Guácima", code: "GUACIMA" },
+  { name: "Guácima Abajo", code: "ABAJO" },
+  { name: "Ciruelas", code: "CIRUELAS" },
+  { name: "El Coyol", code: "COYOL" },
+  { name: "Turrúcares", code: "TURRU" },
+];
 
-const BRANCH_LIST = Object.entries(BRANCH_CODES).map(([code, name]) => ({
-  code,
-  name,
-}));
+const BRANCH_CODES = Object.fromEntries(BRANCHES.map((branch) => [branch.code, branch.name]));
 
 const ADMIN_PIN = "ADMIN2026";
+
+function normalizeCode(value) {
+  return value
+    .trim()
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
 
 const INITIAL_PRODUCTS = [
   ["Hojaldre", "Cachos grandes"],
@@ -137,15 +141,6 @@ const INITIAL_PRODUCTS = [
 
 const todayKey = () => new Date().toISOString().slice(0, 10);
 
-function normalizeCode(value) {
-  return value
-    .trim()
-    .toUpperCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ");
-}
-
 function makeInitialProducts() {
   return INITIAL_PRODUCTS.map((item, index) => ({
     id: `p-${index + 1}`,
@@ -222,7 +217,7 @@ function computeTotals(products, orders, dateValue = todayKey()) {
 
   const index = Object.fromEntries(totals.map((t) => [t.id, t]));
 
-  Object.values(BRANCH_CODES).forEach((branch) => {
+  BRANCHES.forEach(({ name: branch }) => {
     const order = orders[getOrderKey(branch, dateValue)];
     totals.forEach((t) => {
       const qty = Number(order?.quantities?.[t.id] || 0);
@@ -236,22 +231,27 @@ function computeTotals(products, orders, dateValue = todayKey()) {
 
 function App() {
   const [state, setState] = useState(loadState);
-  const [screen, setScreen] = useState(() => window.location.hash === "#produccion" ? "production-tv" : "home");
+  const [screen, setScreen] = useState("home");
   const [session, setSession] = useState(null);
-  const [selectedBranch, setSelectedBranch] = useState(null);
   const [pin, setPin] = useState("");
   const [toast, setToast] = useState("");
 
   useEffect(() => {
-    if (screen !== "production-tv") return undefined;
-    const sync = () => setState(loadState());
-    const interval = setInterval(sync, 15000);
-    window.addEventListener("storage", sync);
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener("storage", sync);
+    if (window.location.hash === "#produccion") {
+      setSession({ type: "production" });
+      setScreen("production-tv");
+    }
+
+    const handleHashChange = () => {
+      if (window.location.hash === "#produccion") {
+        setSession({ type: "production" });
+        setScreen("production-tv");
+      }
     };
-  }, [screen]);
+
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
 
   function updateState(next) {
     setState(next);
@@ -265,7 +265,6 @@ function App() {
 
   function logout() {
     setSession(null);
-    setSelectedBranch(null);
     setPin("");
     setScreen("home");
   }
@@ -274,10 +273,9 @@ function App() {
     const clean = normalizeCode(pin);
 
     if (type === "branch") {
-      const expected = selectedBranch ? normalizeCode(selectedBranch.code) : clean;
-      const branchName = selectedBranch?.name || BRANCH_CODES[clean];
-      if (!branchName || clean !== expected) {
-        showToast("Contraseña incorrecta para esta sucursal.");
+      const branchName = BRANCH_CODES[clean];
+      if (!branchName) {
+        showToast("Código incorrecto. Revise e intente de nuevo.");
         return;
       }
       setSession({ type: "branch", branchName });
@@ -299,10 +297,10 @@ function App() {
   }
 
   return (
-    <div className={screen === "production-tv" ? "tvMode" : ""}>
+    <div>
       {toast && <div className="toast">{toast}</div>}
 
-      {screen !== "production-tv" && <header className="topbar">
+      {screen !== "production-tv" && (<header className="topbar">
         <div className="brand" onClick={() => setScreen("home")}>
           <div className="brandIcon"><Store size={22} /></div>
           <div>
@@ -316,22 +314,22 @@ function App() {
             <LogOut size={18} /> Salir
           </button>
         )}
-      </header>}
+      </header>)}
 
       <main className={screen === "production-tv" ? "tvContainer" : "container"}>
         {screen === "home" && (
-          <HomeScreen setScreen={setScreen} setSelectedBranch={setSelectedBranch} />
+          <HomeScreen setScreen={setScreen} />
         )}
 
-        {screen === "branch-login" && (
+        {screen.startsWith("branch-login") && (
           <LoginScreen
-            title={selectedBranch ? `Sucursal: ${selectedBranch.name}` : "Ingreso de sucursal"}
-            subtitle={selectedBranch ? "Digite la contraseña de esta sucursal para hacer el pedido diario." : "Seleccione una sucursal desde el inicio."}
+            title={screen.includes(":") ? `Ingreso: ${screen.split(":")[1]}` : "Ingreso de sucursal"}
+            subtitle="Digite la clave corta de su sucursal. Se verá lo que está escribiendo para evitar confusiones."
             icon={<ClipboardList size={34} />}
             pin={pin}
             setPin={setPin}
             onLogin={() => handleLogin("branch")}
-            onBack={() => { setSelectedBranch(null); setScreen("home"); }}
+            onBack={() => setScreen("home")}
           />
         )}
 
@@ -372,47 +370,35 @@ function App() {
   );
 }
 
-function HomeScreen({ setScreen, setSelectedBranch }) {
-  function openBranch(branch) {
-    setSelectedBranch(branch);
-    setScreen("branch-login");
-  }
-
+function HomeScreen({ setScreen }) {
   return (
     <section className="hero">
       <div className="heroText compactHero">
         <span className="pill">Pedidos diarios</span>
-        <h2>Seleccione la sucursal</h2>
-        <p>
-          Las trabajadoras entran directo por su sucursal. La contraseña es el nombre del pueblo en mayúscula.
-        </p>
+        <h2>Seleccione su sucursal</h2>
+        <p>Toque el botón de su panadería, escriba la clave corta y registre el pedido del día.</p>
       </div>
 
       <div className="branchGrid">
-        {BRANCH_LIST.map((branch) => (
-          <button className="branchCard" key={branch.name} onClick={() => openBranch(branch)}>
-            <Store size={34} />
+        {BRANCHES.map((branch) => (
+          <button
+            className="branchCard"
+            key={branch.name}
+            onClick={() => setScreen(`branch-login:${branch.name}`)}
+          >
+            <ClipboardList size={34} />
             <h3>{branch.name}</h3>
-            <p>Contraseña: <b>{branch.code}</b></p>
+            <p>Entrar a pedido diario</p>
           </button>
         ))}
       </div>
 
       <div className="adminAccess">
-        <button className="homeCard adminCard" onClick={() => setScreen("admin-login")}>
-          <Settings size={36} />
-          <div>
-            <h3>Administrador</h3>
-            <p>Revisar pedidos, modificar productos e imprimir la hoja de producción.</p>
-          </div>
+        <button className="homeCard adminHomeCard" onClick={() => setScreen("admin-login")}>
+          <Settings size={32} />
+          <h3>Administrador</h3>
+          <p>Revisar pedidos, modificar productos e imprimir el consolidado.</p>
         </button>
-      </div>
-
-      <div className="demoCodes">
-        <h3>Vista para televisor de producción</h3>
-        <p>
-          Para los panaderos use el enlace directo: <b>{window.location.origin}/#produccion</b>. Esta vista queda lista para pantalla fija y muestra únicamente los productos pedidos por categoría.
-        </p>
       </div>
     </section>
   );
@@ -427,8 +413,9 @@ function LoginScreen({ title, subtitle, icon, pin, setPin, onLogin, onBack }) {
 
       <input
         className="pinInput"
-        type="password"
-        placeholder="Digite la contraseña"
+        type="text"
+        autoComplete="off"
+        placeholder="Digite la clave"
         value={pin}
         onChange={(e) => setPin(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && onLogin()}
@@ -454,11 +441,28 @@ function BranchOrder({ branchName, state, updateState, showToast }) {
     existing?.quantities || emptyQuantities(state.products)
   );
   const [review, setReview] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [filter, setFilter] = useState("all");
 
   const afterDeadline = isAfterDeadline();
+  const visibleProducts = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    return state.products
+      .filter((p) => p.active)
+      .filter((p) => {
+        const hasQty = Number(quantities[p.id] || 0) > 0;
+        if (filter === "completed" && !hasQty) return false;
+        if (filter === "pending" && hasQty) return false;
+        return true;
+      })
+      .filter((p) =>
+        normalized ? `${p.category} ${p.name}`.toLowerCase().includes(normalized) : true
+      );
+  }, [state.products, quantities, query, filter]);
+
   const groups = useMemo(
-    () => groupedProducts(state.products, query),
-    [state.products, query]
+    () => groupedProducts(visibleProducts, ""),
+    [visibleProducts]
   );
 
   function changeQty(productId, value) {
@@ -502,13 +506,36 @@ function BranchOrder({ branchName, state, updateState, showToast }) {
     };
     updateState(next);
     setReview(false);
+    setSubmitted(true);
     showToast("Pedido enviado a producción.");
   }
 
   const totalItems = Object.values(quantities).reduce((a, b) => a + Number(b || 0), 0);
+  const completedCount = state.products.filter((p) => p.active && Number(quantities[p.id] || 0) > 0).length;
+  const pendingCount = state.products.filter((p) => p.active && Number(quantities[p.id] || 0) === 0).length;
   const selectedProducts = state.products
     .filter((p) => Number(quantities[p.id] || 0) > 0)
     .map((p) => ({ ...p, qty: Number(quantities[p.id]) }));
+
+
+  if (submitted) {
+    return (
+      <section className="sentScreen">
+        <div className="sentCard">
+          <CheckCircle size={72} />
+          <h2>Pedido enviado correctamente</h2>
+          <p className="sentBranch">{branchName}</p>
+          <p>El pedido ya quedó registrado para producción.</p>
+          <div className="whatsappNotice">
+            Ahora por favor notifique en WhatsApp que ya enviaron el pedido.
+          </div>
+          <button className="primaryBtn wide" onClick={() => { setSubmitted(false); window.location.hash = ""; window.location.reload(); }}>
+            Finalizar
+          </button>
+        </div>
+      </section>
+    );
+  }
 
   if (review) {
     return (
@@ -589,12 +616,24 @@ function BranchOrder({ branchName, state, updateState, showToast }) {
         <div className="totalBadge">Total: {totalItems}</div>
       </div>
 
+      <div className="filterBar">
+        <button className={filter === "all" ? "filterBtn active" : "filterBtn"} onClick={() => setFilter("all")}>
+          Todos
+        </button>
+        <button className={filter === "pending" ? "filterBtn active" : "filterBtn"} onClick={() => setFilter("pending")}>
+          Falta completar: {pendingCount}
+        </button>
+        <button className={filter === "completed" ? "filterBtn active" : "filterBtn"} onClick={() => setFilter("completed")}>
+          Completados: {completedCount}
+        </button>
+      </div>
+
       {Object.entries(groups).map(([category, products]) => (
         <div className="categoryCard" key={category}>
           <h3>{category}</h3>
           <div className="productGrid">
             {products.map((p) => (
-              <div className="productItem" key={p.id}>
+              <div className={Number(quantities[p.id] || 0) > 0 ? "productItem filled" : "productItem"} key={p.id}>
                 <label>{p.name}</label>
                 <input
                   type="number"
@@ -621,55 +660,6 @@ function BranchOrder({ branchName, state, updateState, showToast }) {
   );
 }
 
-function ProductionTV({ state }) {
-  const totals = computeTotals(state.products, state.orders).filter((row) => row.total > 0);
-  const grouped = totals.reduce((acc, row) => {
-    if (!acc[row.category]) acc[row.category] = [];
-    acc[row.category].push(row);
-    return acc;
-  }, {});
-  const grandTotal = totals.reduce((a, b) => a + b.total, 0);
-  const sentCount = Object.values(BRANCH_CODES).filter(
-    (branch) => state.orders[getOrderKey(branch)]?.status === "sent"
-  ).length;
-
-  return (
-    <section className="tvBoard">
-      <div className="tvHeader">
-        <div>
-          <span>Producción diaria</span>
-          <h1>Pedido actualizado por categoría</h1>
-          <p>{new Date().toLocaleDateString("es-CR")} · Se actualiza automáticamente en pantalla.</p>
-        </div>
-        <div className="tvStats">
-          <div><small>Total</small><b>{grandTotal}</b></div>
-          <div><small>Sucursales</small><b>{sentCount}/5</b></div>
-        </div>
-      </div>
-
-      {totals.length === 0 ? (
-        <div className="tvEmpty">Aún no hay pedidos enviados para hoy.</div>
-      ) : (
-        <div className="tvCategoryGrid">
-          {Object.entries(grouped).map(([category, rows]) => (
-            <div className="tvCategory" key={category}>
-              <h2>{category}</h2>
-              <div className="tvProducts">
-                {rows.map((row) => (
-                  <div className="tvProduct" key={row.id}>
-                    <span>{row.product}</span>
-                    <b>{row.total}</b>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
 function ProductionView({ state }) {
   const [showOnlyWithQty, setShowOnlyWithQty] = useState(true);
   const totals = computeTotals(state.products, state.orders).filter(
@@ -677,8 +667,8 @@ function ProductionView({ state }) {
   );
 
   const grandTotal = totals.reduce((a, b) => a + b.total, 0);
-  const sentCount = Object.values(BRANCH_CODES).filter(
-    (branch) => state.orders[getOrderKey(branch)]?.status === "sent"
+  const sentCount = BRANCHES.filter(
+    ({ name: branch }) => state.orders[getOrderKey(branch)]?.status === "sent"
   ).length;
 
   return (
@@ -730,7 +720,7 @@ function ProductionView({ state }) {
               <tr key={row.id}>
                 <td>{row.category}</td>
                 <td className="strong">{row.product}</td>
-                {Object.values(BRANCH_CODES).map((branch) => (
+                {BRANCHES.map(({ name: branch }) => (
                   <td className="right" key={branch}>{row.byBranch[branch]}</td>
                 ))}
                 <td className="right totalCell">{row.total}</td>
@@ -743,6 +733,47 @@ function ProductionView({ state }) {
   );
 }
 
+
+function ProductionTV({ state }) {
+  const totals = computeTotals(state.products, state.orders)
+    .filter((row) => row.total > 0)
+    .sort((a, b) => a.category.localeCompare(b.category) || a.product.localeCompare(b.product));
+
+  const grandTotal = totals.reduce((a, b) => a + b.total, 0);
+  const sentCount = BRANCHES.filter(
+    ({ name: branch }) => state.orders[getOrderKey(branch)]?.status === "sent"
+  ).length;
+
+  return (
+    <section className="tvScreen">
+      <div className="tvHeader">
+        <div>
+          <h1>Producción diaria</h1>
+          <p>{new Date().toLocaleDateString("es-CR")} · actualización automática en pantalla</p>
+        </div>
+        <div className="tvStats">
+          <span>Total: <b>{grandTotal}</b></span>
+          <span>Sucursales: <b>{sentCount}/5</b></span>
+        </div>
+      </div>
+
+      {totals.length === 0 ? (
+        <div className="tvEmpty">Aún no hay productos pedidos para hoy.</div>
+      ) : (
+        <div className="tvProductGrid">
+          {totals.map((row) => (
+            <div className="tvProduct" key={row.id}>
+              <span>{row.category}</span>
+              <strong>{row.product}</strong>
+              <b>{row.total}</b>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function AdminView({ state, updateState, showToast }) {
   const [tab, setTab] = useState("status");
   const [newProduct, setNewProduct] = useState({
@@ -751,7 +782,7 @@ function AdminView({ state, updateState, showToast }) {
     seasonal: true,
   });
 
-  const statuses = Object.values(BRANCH_CODES).map((branch) => {
+  const statuses = BRANCHES.map(({ name: branch }) => {
     const order = state.orders[getOrderKey(branch)];
     return {
       branch,
