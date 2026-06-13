@@ -1,6 +1,6 @@
 {
   "name": "sabor-y-pan-pedidos-demo",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "scripts": {
     "dev": "vite --host 0.0.0.0",
@@ -8,6 +8,7 @@
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.50.0",
     "@vitejs/plugin-react": "latest",
     "vite": "latest",
     "react": "latest",
